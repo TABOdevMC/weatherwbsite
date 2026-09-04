@@ -16,39 +16,66 @@ const iconForCode = c => c===0 ? icons.sun : c<=3 ? icons.cloud : c<=48 ? icons.
 const codes = {0:['sun','Ciel dégagé'],1:['sun','Principalement dégagé'],2:['cloud','Partiellement nuageux'],3:['cloud','Couvert'],45:['fog','Brouillard'],48:['fog','Brouillard givrant'],51:['rain','Bruine légère'],53:['rain','Bruine'],55:['rain','Forte bruine'],61:['rain','Pluie légère'],63:['rain','Pluie'],65:['rain','Forte pluie'],71:['snow','Neige légère'],73:['snow','Neige'],75:['snow','Forte neige'],80:['rain','Averses'],81:['rain','Averses'],82:['storm','Fortes averses'],95:['storm','Orage'],96:['storm','Orage avec grêle'],99:['storm','Orage avec grêle']};
 
 let map, currentMarker, tempLayer, windLayer, rainLayer;
+let heatRequestId = 0;
+let heatRefreshTimer;
 
 function initMap(){
   if(map || typeof L === 'undefined') return;
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
   map = L.map('map',{layers:[osm],zoomControl:true});
-  tempLayer = L.heatLayer([], {radius:70, blur:55, maxZoom:9, minOpacity:0.28, max:1, gradient:{0:'#313695',0.2:'#4575b4',0.4:'#74add1',0.55:'#ffffbf',0.7:'#fdae61',0.85:'#f46d43',1:'#a50026'}});
-  windLayer = L.heatLayer([], {radius:65, blur:50, maxZoom:9, minOpacity:0.22, max:0.9, gradient:{0:'#313695',0.25:'#74add1',0.5:'#ffffbf',0.7:'#fdae61',0.85:'#f46d43',1:'#a50026'}});
+  tempLayer = L.heatLayer([], {radius:42, blur:34, maxZoom:19, minOpacity:0.24, max:0.88, gradient:{0:'#313695',0.18:'#4575b4',0.36:'#74add1',0.52:'#ffffbf',0.68:'#fdae61',0.84:'#f46d43',1:'#a50026'}});
+  windLayer = L.heatLayer([], {radius:42, blur:34, maxZoom:19, minOpacity:0.2, max:0.82, gradient:{0:'#313695',0.2:'#4575b4',0.42:'#74add1',0.58:'#ffffbf',0.72:'#fdae61',0.86:'#f46d43',1:'#a50026'}});
   rainLayer = L.layerGroup();
   L.control.layers({'🗺️ OpenStreetMap':osm},{'🌡️ Température':tempLayer,'💨 Vent':windLayer,'🌧️ Précipitations':rainLayer},{collapsed:false}).addTo(map);
+  map.on('moveend zoomend', scheduleViewportHeatmap);
 }
 
-async function loadWeatherField(p){
+function scheduleViewportHeatmap(){
+  clearTimeout(heatRefreshTimer);
+  heatRefreshTimer=setTimeout(()=>refreshViewportHeatmap(),220);
+}
+
+function buildViewportPoints(){
+  const bounds=map.getBounds();
+  const south=Math.max(-85,bounds.getSouth());
+  const north=Math.min(85,bounds.getNorth());
+  let west=bounds.getWest();
+  let east=bounds.getEast();
+  if(east<west) east+=360;
+  const latSpan=Math.max(0.1,north-south);
+  const lonSpan=Math.max(0.1,east-west);
+  const cos=Math.max(0.25,Math.cos(((south+north)/2)*Math.PI/180));
+  const target=15;
+  const latStep=Math.max(0.18,latSpan/target);
+  const lonStep=Math.max(0.18,lonSpan/(target*cos));
   const points=[];
-  const latStep=0.5;
-  const lonStep=0.75/Math.max(0.35,Math.cos(p.latitude*Math.PI/180));
-  for(let y=-5;y<=5;y++){
-    for(let x=-5;x<=5;x++){
-      points.push([p.latitude+y*latStep,p.longitude+x*lonStep]);
+  for(let lat=south;lat<=north+latStep*0.35;lat+=latStep){
+    for(let x=west;x<=east+lonStep*0.35;x+=lonStep){
+      let lon=x;
+      while(lon>180) lon-=360;
+      while(lon<-180) lon+=360;
+      points.push([Number(lat.toFixed(4)),Number(lon.toFixed(4))]);
     }
   }
-  const q = new URLSearchParams({
+  return points.slice(0,500);
+}
+
+async function loadViewportWeather(){
+  const points=buildViewportPoints();
+  if(!points.length) return [];
+  const q=new URLSearchParams({
     latitude:points.map(v=>v[0]).join(','),
     longitude:points.map(v=>v[1]).join(','),
     current:'temperature_2m,wind_speed_10m',
     timezone:'auto'
   });
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),8000);
+  const timer=setTimeout(()=>controller.abort(),9000);
   try{
     const r=await fetch(`https://api.open-meteo.com/v1/forecast?${q}`,{signal:controller.signal});
     if(!r.ok) throw new Error('Champ météo indisponible');
     const data=await r.json();
-    return Array.isArray(data) ? data : [data];
+    return Array.isArray(data)?data:[data];
   }finally{
     clearTimeout(timer);
   }
@@ -59,15 +86,25 @@ function drawWeatherField(data){
   const temps=[];
   const winds=[];
   data.forEach(v=>{
-    const lat=v.latitude;
-    const lon=v.longitude;
     const temp=v.current?.temperature_2m;
     const wind=v.current?.wind_speed_10m;
-    if(Number.isFinite(temp)) temps.push([lat,lon,Math.max(0,Math.min(1,(temp+10)/45))]);
-    if(Number.isFinite(wind)) winds.push([lat,lon,Math.max(0.05,Math.min(1,wind/70))]);
+    if(Number.isFinite(temp)) temps.push([v.latitude,v.longitude,Math.max(0,Math.min(1,(temp+10)/45))]);
+    if(Number.isFinite(wind)) winds.push([v.latitude,v.longitude,Math.max(0.04,Math.min(1,wind/70))]);
   });
   tempLayer.setLatLngs(temps);
   windLayer.setLatLngs(winds);
+}
+
+async function refreshViewportHeatmap(){
+  if(!map || !tempLayer || !windLayer) return;
+  const requestId=++heatRequestId;
+  try{
+    const data=await loadViewportWeather();
+    if(requestId!==heatRequestId) return;
+    drawWeatherField(data);
+  }catch(e){
+    if(e.name!=='AbortError') console.warn('Heatmap météo:',e);
+  }
 }
 
 async function updateRainRadar(){
@@ -80,7 +117,7 @@ async function updateRainRadar(){
     clearTimeout(timer);
     if(!r.ok) throw new Error('Radar indisponible');
     const data=await r.json();
-    const frames=data.radar?.past || [];
+    const frames=data.radar?.past||[];
     const frame=frames[frames.length-1];
     if(!frame) return;
     L.tileLayer(`${data.host}${frame.path}/256/{z}/{x}/{y}/2/1_0.png`,{opacity:0.65,maxZoom:7,attribution:'Radar météo © RainViewer'}).addTo(rainLayer);
@@ -96,13 +133,8 @@ async function updateMap(p,c){
     map.setView([p.latitude,p.longitude],7);
     if(currentMarker) currentMarker.remove();
     currentMarker=L.marker([p.latitude,p.longitude]).addTo(map).bindPopup(`<b>${p.name}</b><br>${Math.round(c.temperature_2m)}°C · ${Math.round(c.wind_speed_10m)} km/h`);
-    try{
-      const field=await loadWeatherField(p);
-      drawWeatherField(field);
-    }catch(e){
-      console.warn('Heatmap météo:',e);
-    }
-    await updateRainRadar();
+    await refreshViewportHeatmap();
+    updateRainRadar();
     setTimeout(()=>map.invalidateSize(),100);
   }catch(e){
     console.warn('Carte:',e);
