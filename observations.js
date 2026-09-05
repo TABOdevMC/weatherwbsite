@@ -1,0 +1,51 @@
+(() => {
+  const API = window.WEATHER_OBSERVATIONS_API || '/api/observations';
+  const TYPES = {
+    rain:{name:'Pluie',icon:'<svg viewBox="0 0 24 24"><path d="M17.5 15H9a6 6 0 1 1 1.5-11.8A5.5 5.5 0 0 1 21 7.5 3.5 3.5 0 0 1 17.5 15Z"/><path d="m8 18-1 3m5-3-1 3m5-3-1 3"/></svg>'},
+    snow:{name:'Neige',icon:'<svg viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M8 5l4 2 4-2M8 19l4-2 4 2"/></svg>'},
+    hail:{name:'Grêle',icon:'<svg viewBox="0 0 24 24"><path d="M17.5 13H9a6 6 0 1 1 1.5-11.8A5.5 5.5 0 0 1 21 5.5 3.5 3.5 0 0 1 17.5 13Z"/><circle cx="8" cy="18" r="1.3"/><circle cx="12" cy="20" r="1.3"/><circle cx="16" cy="18" r="1.3"/></svg>'},
+    fog:{name:'Brouillard',icon:'<svg viewBox="0 0 24 24"><path d="M4 8h16M2 12h20M5 16h14M8 20h8"/></svg>'},
+    storm:{name:'Orage',icon:'<svg viewBox="0 0 24 24"><path d="M17.5 14H9a6 6 0 1 1 1.5-11.8A5.5 5.5 0 0 1 21 6.5 3.5 3.5 0 0 1 17.5 14Z"/><path d="m13 13-3 5h3l-2 4 6-7h-3l2-2"/></svg>'},
+    wind:{name:'Vent fort',icon:'<svg viewBox="0 0 24 24"><path d="M3 8h12a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h10"/></svg>'},
+    ice:{name:'Verglas',icon:'<svg viewBox="0 0 24 24"><path d="M12 2v20M4.2 7.5l15.6 9M4.2 16.5l15.6-9M7 5l5 3 5-3M7 19l5-3 5 3"/></svg>'},
+    clear:{name:'Ciel dégagé',icon:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/></svg>'}
+  };
+  const $ = id => document.getElementById(id);
+
+  function addPanel(){
+    if($('observationsPanel')) return;
+    const section=document.createElement('section'); section.id='observationsPanel'; section.className='panel observations-panel';
+    section.innerHTML=`<div class="panel-title"><div><span>PARTICIPATION</span><h2>Observations météo</h2></div><small>Signalements sur la carte</small></div>
+      <div class="obs-layout"><form id="obsForm" class="obs-form">
+        <label>Type d'observation<select id="obsType">${Object.entries(TYPES).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('')}</select></label>
+        <label>Intensité<select id="obsIntensity"><option value="1">Faible</option><option value="2" selected>Modérée</option><option value="3">Forte</option><option value="4">Extrême</option></select></label>
+        <label>Commentaire <textarea id="obsComment" maxlength="280" placeholder="Ex. forte averse depuis 10 minutes…"></textarea></label>
+        <div class="obs-location"><button type="button" id="obsPosition">📍 Utiliser ma position</button><span id="obsCoords">Position non définie</span></div>
+        <button class="obs-submit" type="submit">📤 Publier l'observation</button><p id="obsStatus" class="obs-status"></p>
+      </form><div><div class="obs-list-title">Dernières observations</div><div id="obsList" class="obs-list"></div></div></div>`;
+    const mapPanel=document.querySelector('.map-panel'); mapPanel?.after(section);
+    $('obsForm').addEventListener('submit',publish); $('obsPosition').addEventListener('click',locate); load();
+  }
+
+  let coords=null;
+  function locate(){
+    if(!navigator.geolocation){$('obsStatus').textContent='Géolocalisation indisponible.';return;}
+    navigator.geolocation.getCurrentPosition(p=>{coords={latitude:p.coords.latitude,longitude:p.coords.longitude};$('obsCoords').textContent=`${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;},()=>{$('obsStatus').textContent='Position inaccessible.';},{enableHighAccuracy:true,timeout:10000});
+  }
+  async function publish(e){
+    e.preventDefault(); const status=$('obsStatus');
+    if(!coords){status.textContent='Utilise d’abord « ma position ».';return;}
+    const payload={type:$('obsType').value,intensity:Number($('obsIntensity').value),comment:$('obsComment').value.trim(),latitude:coords.latitude,longitude:coords.longitude};
+    status.textContent='Publication…';
+    try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)throw new Error(d.error||'Publication impossible');status.textContent='Observation publiée ✓';$('obsComment').value='';await load();addMarker(d);}
+    catch(err){status.textContent='Erreur : '+err.message;}
+  }
+  function markerIcon(type){const t=TYPES[type]||TYPES.clear;return L.divIcon({className:'obs-marker',html:`<span>${t.icon}</span>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-19]});}
+  function addMarker(o){if(typeof L==='undefined'||typeof map==='undefined'||!map)return; if(o._marker)o._marker.remove(); const t=TYPES[o.type]||TYPES.clear; const m=L.marker([o.latitude,o.longitude],{icon:markerIcon(o.type)}).addTo(map);m.bindPopup(`<b>${t.name}</b><br>Intensité ${o.intensity}/4${o.comment?`<br>${escapeHtml(o.comment)}`:''}<br><small>${new Date(o.createdAt).toLocaleString('fr-FR')}</small>`);o._marker=m;}
+  function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+  async function load(){
+    try{const r=await fetch(API);if(!r.ok)throw new Error();const data=await r.json();$('obsList').innerHTML=data.slice(0,12).map(o=>{const t=TYPES[o.type]||TYPES.clear;return `<article class="obs-item"><span class="obs-item-icon">${t.icon}</span><div><b>${t.name}</b><small>Intensité ${o.intensity}/4 · ${new Date(o.createdAt).toLocaleString('fr-FR')}</small>${o.comment?`<p>${escapeHtml(o.comment)}</p>`:''}</div></article>`}).join('')||'<p class="obs-empty">Aucune observation pour le moment.</p>';data.forEach(addMarker);}
+    catch{$('obsList').innerHTML='<p class="obs-empty">Serveur d’observations non configuré.</p>';}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addPanel);else addPanel();
+})();
