@@ -7,6 +7,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<style>
+#debugAccess{position:fixed;right:18px;bottom:18px;z-index:9998;border:1px solid #33465e;border-radius:12px;background:#132136;color:#f8fafc;padding:10px 14px;font:700 13px Inter,system-ui,sans-serif;box-shadow:0 10px 30px #0008;cursor:pointer}#debugAccess:hover{filter:brightness(1.15)}
+</style>
 </head>
 <body>
 <div class="background-glow glow-one"></div><div class="background-glow glow-two"></div>
@@ -27,9 +30,11 @@
   <section class="panel"><div class="panel-title"><div><span>TENDANCE</span><h2>Les 7 prochains jours</h2></div><small>Prévisions</small></div><div id="daily" class="daily-grid"></div></section>
 </section>
 </main>
+<button id="debugAccess" type="button" title="Ouvrir le mode debug">🛠️ Mode debug</button>
 <footer>Données météo fournies par <strong>Open-Meteo</strong> · Carte © OpenStreetMap / Leaflet</footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 <script src="app.js?v=20260904-5"></script>
 <script src="debug.js?v=20260904-1"></script>
+<script>document.getElementById('debugAccess').onclick=()=>{const u=new URL(location.href);u.searchParams.set('debug','1');location.href=u.toString();};</script>
 </body></html>
